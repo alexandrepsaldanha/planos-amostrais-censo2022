@@ -1,0 +1,369 @@
+---
+title: "Comparação teórica de planos amostrais"
+subtitle: "PTE 3524 · Amostragem e Análise de Dados Amostrais · ENCE/IBGE"
+author: "Alexandre Saldanha"
+date: "2026"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+    html_preview: false
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 3.6, dpi = 200, fig.path = "output/figuras/")
+library(dplyr)
+library(ggplot2)
+source("R/planos.R")
+
+cad <- read.csv("data/Cadastro_Municipios_2026.csv", encoding = "UTF-8")
+n <- 800
+N <- nrow(cad)
+
+# Proxy: domicílios urbanos
+y <- cad$domicilios * cad$pct_urbana
+Y <- sum(y)
+
+# Formatação brasileira
+f <- function(x, d = 0) formatC(x, format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+fe <- function(x, d = 2) {                     # notação científica: 1,23 × 10^12
+  e <- floor(log10(abs(x)))
+  paste0(formatC(x / 10^e, format = "f", digits = d, decimal.mark = ","), " × 10<sup>", e, "</sup>")
+}
+pct <- function(x, d = 1) paste0(f(100 * x, d), "%")
+tab <- function(df, ...) knitr::kable(df, format = "pipe", ...)
+
+# ---- Planos ----
+v_aas <- var_aas(y, n)
+est_cand <- c("Região" = "regiao_nome", "UF" = "uf_sigla", "Tipologia urbano-rural" = "tipologia_urb_rural",
+              "Porte populacional" = "porte_populacional", "UF × porte" = "estrato_uf_porte")
+aes_ney  <- aes_plano(y, cad$estrato_uf_porte, n, "neyman")
+aes_prop <- aes_plano(y, cad$estrato_uf_porte, n, "proporcional")
+c_imed   <- ac1s(y, cad$regiao_imediata, n)
+c_inter  <- ac1s(y, cad$regiao_intermediaria, n)
+ppt      <- ppt_hh(y, cad$domicilios, n)
+
+linha <- function(nome, v) data.frame(Plano = nome, `Variância` = fe(v), `Erro-padrão` = f(sqrt(v)),
+                                       `CV` = pct(sqrt(v) / Y, 2), EPA = f(v / v_aas, 4), check.names = FALSE)
+```
+
+# §1. Contextualização
+
+**Pergunta de pesquisa (a):** qual o total de domicílios com acesso adequado a saneamento básico no Brasil?
+
+**Unidade.** O cadastro tem uma linha por município, e a variável de pesquisa $Y_i$ é o total de domicílios com saneamento adequado *já agregado* no município $i$. Como o plano não desce ao domicílio em um segundo estágio, o domicílio é o objeto contado, e o **município é a unidade de amostragem e de análise**.
+
+- **População-alvo:** o conjunto dos municípios brasileiros, incluindo o Distrito Federal, existentes no território nacional na data de referência do Censo Demográfico 2022.
+- **População de pesquisa:** os $N = `r f(N)`$ municípios listados no cadastro `Cadastro_Municipios_2026`. A diferença entre as duas populações é de **cobertura** (municípios existentes *versus* municípios listados), e não de unidade.
+- **Parâmetro:** o total populacional
+
+$$Y = \sum_{i=1}^{N} Y_i ,$$
+
+estimado com um tamanho amostral fixo de $n = 800$ municípios.
+
+**Variável proxy: domicílios urbanos**, $y_i = d_i \, u_i$, em que $d_i$ é o número de domicílios (`domicilios`) e $u_i$ a proporção da população em área urbana (`pct_urbana`). A rede geral de esgoto e de abastecimento de água, que define o acesso adequado, concentra-se nas áreas urbanas; o número de domicílios urbanos reproduz, portanto, a escala municipal *e* a desigualdade de cobertura entre municípios mais e menos urbanizados. A proxy supõe implicitamente cobertura total na área urbana e nula na rural, o que superestima o nível de $Y$; como o objetivo é comparar planos, o que importa é que a proxy reproduza a *distribuição* de $Y_i$ entre municípios. A escolha também evita a dependência quase determinística com a medida de tamanho da PPT, discutida na §2.
+
+# §2. Exploração do cadastro
+
+## 2.1 Verificação de consistência
+
+Antes de usar o cadastro, verificou-se a coerência interna das variáveis. Dois resultados condicionam a análise:
+
+```{r consistencia}
+k <- cad |> mutate(k = pop_total_censo2022 / domicilios) |>
+  group_by(Região = regiao_nome) |>
+  summarise(`Pessoas por domicílio` = f(mean(k), 2), `Mínimo` = f(min(k), 3), `Máximo` = f(max(k), 3))
+erro_max <- max(abs(cad$domicilios - round(cad$pop_total_censo2022 /
+              ave(cad$pop_total_censo2022 / cad$domicilios, cad$regiao_nome, FUN = median))))
+exemplos <- cad |> filter(nome_municipio %in% c("Rio de Janeiro", "Salvador", "Porto Alegre", "Belo Horizonte"), capital == 1) |>
+  select(`Município` = nome_municipio, UF = uf_sigla, `Região imediata no cadastro` = regiao_imediata)
+```
+
+1. **`domicilios` é derivada da população.** Em todos os municípios, `domicilios` é a população total dividida por um tamanho médio de domicílio fixo por macrorregião (erro máximo de `r erro_max` domicílios). A variável não traz informação além de `pop_total_censo2022` e da região. Consequência: qualquer par proxy/medida de tamanho formado por essas duas variáveis tem razão $y_i/x_i$ praticamente constante.
+
+`r tab(k, align = "lrrr")`
+
+2. **As regiões geográficas imediatas e intermediárias não correspondem à divisão do IBGE.** Capitais aparecem em regiões de outros municípios, por exemplo:
+
+`r tab(exemplos, align = "lll")`
+
+A UF, a macrorregião, o porte e a tipologia são consistentes com a população. As regiões são usadas como estão no cadastro, por ser o cadastro da atividade, mas os resultados da AC1S devem ser lidos como relativos a esses agrupamentos, que não são geográficos.
+
+## 2.2 Distribuição da proxy
+
+```{r proxy}
+q <- quantile(y, c(.5, .9, .99))
+top <- sort(y, decreasing = TRUE)
+dist <- data.frame(N = f(N), Total = f(Y), `Média` = f(mean(y)), Mediana = f(unname(q[1])),
+                   `Desvio-padrão` = f(sd(y)), CV = pct(sd(y) / mean(y), 0),
+                   `Máximo` = f(max(y)), check.names = FALSE)
+```
+
+`r tab(dist, align = "rrrrrrr", row.names = FALSE)`
+
+A distribuição é extremamente assimétrica: o CV populacional é de `r pct(sd(y)/mean(y), 0)`, a média é `r f(mean(y)/q[1], 1)` vezes a mediana e os `r sum(cad$porte_populacional == "7. Mais de 500 mil")` municípios com mais de 500 mil habitantes concentram `r pct(sum(y[cad$porte_populacional == "7. Mais de 500 mil"]) / Y, 0)` do total. Essa concentração explica a maior parte dos resultados da §4.
+
+## 2.3 Estratos candidatos
+
+O critério de escolha é a decomposição da variância da proxy em parcelas entre e dentro dos estratos: quanto maior a parcela **entre**, mais homogêneos são os estratos internamente (Silva; Bianchini; Dias, 2024, cap. 4).
+
+```{r estratos}
+cand <- bind_rows(lapply(names(est_cand), function(nm) {
+  g <- cad[[est_cand[nm]]]; nh <- table(g)
+  data.frame(Estratificadora = nm, H = length(nh), `N_h mínimo` = min(nh), `N_h máximo` = f(max(nh)),
+             `Variância entre` = pct(r2_entre(y, g)), `Variância dentro` = pct(1 - r2_entre(y, g)), check.names = FALSE)
+}))
+```
+
+`r tab(cand, align = "lrrrrr")`
+
+**UF × porte** (`estrato_uf_porte`) explica a maior parcela da variância e combina dois domínios naturais de divulgação; é a estratificação adotada. O porte isolado explica quase o mesmo, o que mostra que a escala municipal é a principal fonte de heterogeneidade.
+
+## 2.4 UPAs candidatas
+
+```{r upas}
+upas <- bind_rows(lapply(list(`Regiões imediatas` = c_imed, `Regiões intermediárias` = c_inter), function(c)
+  data.frame(M = c$M, `M̄ (municípios por UPA)` = f(c$Mbar, 2), `Mínimo` = c$min_Mi, `Máximo` = c$max_Mi,
+             `m (UPAs para n ≈ 800)` = c$m, `n esperado` = f(c$n_esperado), check.names = FALSE)), .id = "UPA")
+r2u <- c(r2_entre(y, cad$regiao_imediata), r2_entre(y, cad$regiao_intermediaria))
+```
+
+`r tab(upas, align = "lrrrrrr")`
+
+Os conglomerados são heterogêneos *entre si* em tamanho: os totais por região imediata têm desvio-padrão de `r f(sqrt(c_imed$S2_totais))` domicílios urbanos, para uma média de `r f(Y / c_imed$M)`. A eficiência da AC1S depende justamente da variância desses totais, que é alta porque as UPAs reúnem números diferentes de municípios, de portes muito diferentes. As regiões imediatas foram escolhidas por oferecerem mais UPAs (`r c_imed$m` em vez de `r c_inter$m`) e conglomerados menores.
+
+## 2.5 Medida de tamanho para a PPT
+
+A medida de tamanho deve antecipar a magnitude de $y_i$ **sem ser a própria proxy nem uma transformação direta dela**. O diagnóstico relevante não é só a correlação, mas a dispersão das razões $y_i/x_i$: quanto mais constante a razão, menor a variância da PPT, e uma razão constante *por construção* torna a comparação artificial.
+
+```{r mos}
+mos_cand <- c("Domicílios" = "domicilios", "População total" = "pop_total_censo2022",
+              "População urbana" = "pop_urbana_censo2022", "Área (km²)" = "area_km2")
+mos <- bind_rows(lapply(names(mos_cand), function(nm) {
+  p <- ppt_hh(y, cad[[mos_cand[nm]]], n)
+  data.frame(`Medida de tamanho` = nm, `Correlação com y` = f(p$cor_yx, 3),
+             `CV de y/x` = f(p$cv_razao, 3), `EPA da PPT` = f(p$variancia / v_aas, 5), check.names = FALSE)
+}))
+```
+
+`r tab(mos, align = "lrrr")`
+
+- **População urbana** é inadequada: $y_i/x_i$ é o inverso do tamanho médio do domicílio da região, quase constante (CV de `r mos[3, 3]`), e o EPA resulta artificialmente próximo de zero.
+- **Área** não antecipa a magnitude de $y_i$ e torna a PPT pior que a AAS.
+- **Domicílios** é a escolha adotada: $y_i/x_i = u_i$, a proporção urbana, que varia genuinamente entre municípios (CV de `r mos[1, 3]`). A população total produz razão equivalente, a menos do fator regional.
+
+```{r razoes, fig.height = 3}
+razoes <- bind_rows(lapply(names(mos_cand)[1:3], function(nm)
+  data.frame(mos = nm, r = y / cad[[mos_cand[nm]]] / mean(y / cad[[mos_cand[nm]]]))))
+ggplot(razoes, aes(x = r, y = factor(mos, levels = rev(names(mos_cand)[1:3])))) +
+  geom_boxplot(fill = "#86b6ef", color = "#1c5cab", outlier.size = 0.6, outlier.alpha = 0.4, width = 0.55) +
+  scale_x_continuous(labels = function(x) f(x, 1)) +
+  labs(x = "y / x, relativa à média", y = NULL,
+       title = "Dispersão das razões y/x por medida de tamanho") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), plot.title.position = "plot", panel.grid.minor = element_blank())
+```
+
+# §3. Planos amostrais e variâncias teóricas
+
+Em todos os planos, a variância é a **variância teórica** do estimador do total, calculada sobre o cadastro completo com a proxy no lugar de $Y_i$, para $n = 800$. As cinco variâncias foram conferidas por simulação de Monte Carlo, com 20 mil amostras por plano (5 mil na AES): as variâncias empíricas ficaram a menos de 1,5% das teóricas ([`R/verificacao_monte_carlo.R`](R/verificacao_monte_carlo.R)).
+
+## 3.1 Amostragem aleatória simples sem reposição (AAS)
+
+**Definição operacional:** seleção equiprovável de 800 municípios entre os `r f(N)` do cadastro (fração amostral $f = n/N$ de `r pct(n/N)`).
+
+$$\hat{Y}_{AAS} = \frac{N}{n}\sum_{i \in s} y_i, \qquad
+V(\hat{Y}_{AAS}) = N^2\left(1 - \frac{n}{N}\right)\frac{S_y^2}{n}, \qquad
+S_y^2 = \frac{1}{N-1}\sum_{i=1}^{N}(y_i - \bar{Y})^2$$
+
+**Resultado:** $V(\hat{Y}_{AAS}) =$ `r fe(v_aas)`, CV de `r pct(sqrt(v_aas)/Y, 2)`. É a referência do EPA.
+
+## 3.2 Amostragem estratificada simples (AES)
+
+**Definição operacional:** `r nrow(aes_ney$estratos)` estratos UF × porte; AAS independente dentro de cada estrato.
+
+$$\hat{Y}_{AES} = \sum_{h=1}^{H}\frac{N_h}{n_h}\sum_{i \in s_h} y_{hi}, \qquad
+V(\hat{Y}_{AES}) = \sum_{h=1}^{H} N_h^2\left(1 - \frac{n_h}{N_h}\right)\frac{S_h^2}{n_h}$$
+
+Foram calculadas duas alocações:
+
+- **Proporcional:** $n_h \propto N_h$;
+- **Neyman:** $n_h = n \, \dfrac{N_h S_h}{\sum_k N_k S_k}$, que minimiza $V(\hat{Y}_{AES})$ para $n$ fixo.
+
+Em ambas, cada estrato recebe ao menos $\min(N_h, 2)$ unidades, para que todos sejam cobertos e a variância seja estimável. Na alocação de Neyman, quando $n_h > N_h$, o estrato é recenseado ($n_h = N_h$, contribuição nula para a variância) e a amostra restante é realocada entre os demais, repetindo até que nenhum estrato ultrapasse o seu tamanho (Cochran, 1977, cap. 5). Essa regra resolve o "estouro" de alocação nos estratos de municípios grandes sem precisar alterar a estratificação.
+
+```{r aes-res}
+aes_tab <- bind_rows(
+  data.frame(`Alocação` = "Proporcional", `Estratos recenseados` = aes_prop$n_censo,
+             `Fração de y nos recenseados` = pct(aes_prop$y_censo / Y), CV = pct(sqrt(aes_prop$variancia)/Y, 2),
+             EPA = f(aes_prop$variancia / v_aas, 4), check.names = FALSE),
+  data.frame(`Alocação` = "Neyman", `Estratos recenseados` = aes_ney$n_censo,
+             `Fração de y nos recenseados` = pct(aes_ney$y_censo / Y), CV = pct(sqrt(aes_ney$variancia)/Y, 2),
+             EPA = f(aes_ney$variancia / v_aas, 4), check.names = FALSE))
+```
+
+`r tab(aes_tab, align = "lrrrr")`
+
+Na alocação de Neyman, `r aes_ney$n_censo` estratos são recenseados e concentram `r pct(aes_ney$y_censo / Y, 0)` de $y$. Como a variância vem quase toda dos municípios grandes, recenseá-los elimina a maior parte dela.
+
+## 3.3 Conglomerados em um estágio (AC1S)
+
+**Definição operacional:** UPAs = regiões imediatas do cadastro ($M = `r c_imed$M`$, com $\bar{M} = N/M = `r f(c_imed$Mbar, 2)`$ municípios por UPA). Seleção de $m = n/\bar{M} \approx `r c_imed$m`$ UPAs por AAS e censo dos municípios de cada UPA selecionada, com tamanho esperado de `r f(c_imed$n_esperado)` municípios.
+
+$$\hat{Y}_{AC1} = \frac{M}{m}\sum_{i \in s_I} Y_i, \qquad
+V(\hat{Y}_{AC1}) = M^2\left(1 - \frac{m}{M}\right)\frac{S_{Y}^2}{m}, \qquad
+S_{Y}^2 = \frac{1}{M-1}\sum_{i=1}^{M}\left(Y_i - \frac{Y}{M}\right)^2$$
+
+em que $Y_i = \sum_{j \in U_i} y_{ij}$ é o total da proxy na UPA $i$.
+
+**Resultado:** CV de `r pct(sqrt(c_imed$variancia)/Y, 2)` e EPA de `r f(c_imed$variancia/v_aas, 3)`. Com regiões intermediárias ($m = `r c_inter$m`$), o EPA sobe para `r f(c_inter$variancia/v_aas, 3)`: menos UPAs, maiores e mais desiguais, aumentam a variância dos totais.
+
+## 3.4 Probabilidade proporcional ao tamanho com reposição (PPT)
+
+**Definição operacional:** $n = 800$ seleções independentes, com reposição, com probabilidade $p_i = x_i / X$, em que $x_i$ é o número de domicílios do município e $X = \sum_i x_i$.
+
+$$\hat{Y}_{HH} = \frac{1}{n}\sum_{k=1}^{n}\frac{y_k}{p_k}, \qquad
+V(\hat{Y}_{HH}) = \frac{1}{n}\sum_{i=1}^{N} p_i\left(\frac{y_i}{p_i} - Y\right)^2$$
+
+Como $y_i/p_i = X \, y_i/x_i = X \, u_i$, a variância é proporcional à variância ponderada da taxa de urbanização: a PPT elimina a heterogeneidade de **escala** e mantém apenas a de **composição**.
+
+**Resultado:** CV de `r pct(sqrt(ppt$variancia)/Y, 2)` e EPA de `r f(ppt$variancia/v_aas, 5)`.
+
+# §4. Comparação dos planos
+
+```{r comparacao}
+comp <- bind_rows(
+  linha("AAS (referência)", v_aas),
+  linha("AES UF × porte, proporcional", aes_prop$variancia),
+  linha("AES UF × porte, Neyman", aes_ney$variancia),
+  linha("AC1S, regiões imediatas", c_imed$variancia),
+  linha("PPT com reposição, MOS = domicílios", ppt$variancia))
+```
+
+`r tab(comp, align = "lrrrr")`
+
+```{r fig-epa, fig.height = 3.2}
+ep <- data.frame(plano = c("AES Neyman", "PPT (HH)", "AES proporcional", "AAS", "AC1S"),
+                 epa = c(aes_ney$variancia, ppt$variancia, aes_prop$variancia, v_aas, c_imed$variancia) / v_aas)
+ep$plano <- factor(ep$plano, levels = rev(ep$plano))
+ggplot(ep, aes(x = epa, y = plano)) +
+  geom_vline(xintercept = 1, color = "grey40", linetype = "dashed") +
+  geom_segment(aes(x = 1, xend = epa, yend = plano), color = "#86b6ef", linewidth = 1.2) +
+  geom_point(color = "#1c5cab", size = 3) +
+  geom_text(aes(label = f(epa, 4)), vjust = -0.9, size = 3.2) +
+  scale_x_log10(labels = function(x) f(x, 4), expand = expansion(mult = c(0.08, 0.12))) +
+  labs(x = "EPA (escala logarítmica; AAS = 1)", y = NULL, title = "Efeito do plano amostral, n = 800") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), plot.title.position = "plot",
+        panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+```
+
+A ordem dos planos decorre de como cada um lida com a assimetria da proxy (§2.2):
+
+- **AES com Neyman** tem a menor variância. Os estratos UF × porte separam os municípios por escala, que é a principal fonte de heterogeneidade (`r cand[5, 5]` da variância está entre estratos), e a alocação de Neyman recenseia os estratos de municípios grandes, que concentram a variância.
+- **PPT** fica muito próxima. Ao selecionar com probabilidade proporcional aos domicílios, neutraliza a escala; resta a variação da taxa de urbanização entre municípios.
+- **AES proporcional** ganha com a estratificação, mas aloca amostra de acordo com o número de municípios, e não com a variância: os estratos de municípios pequenos, numerosos e homogêneos recebem amostra demais.
+- **AC1S** é pior que a AAS (EPA > 1). Sob conglomerados, a variância depende da dispersão dos totais das UPAs, que é alta porque as UPAs reúnem de 1 a 47 municípios e algumas contêm municípios muito grandes. Como os totais variam mais entre UPAs do que os valores entre municípios, sortear 73 UPAs informa menos que sortear 800 municípios.
+
+# §5. Recomendação
+
+**Recomenda-se a AES por UF × porte com alocação de Neyman.** É o plano de menor variância para $n = 800$, produz estimativas diretas por UF e por porte, e não depende de uma medida de tamanho. A PPT com domicílios como medida de tamanho é uma alternativa quase equivalente em precisão, mas a seleção com reposição permite repetir municípios e não garante cobertura por UF.
+
+**Limitações.**
+
+1. **Proxy no lugar de $Y$.** Os EPAs medem a eficiência *para a proxy*. A proxy é uma função da população e da taxa de urbanização, que são justamente as variáveis usadas na estratificação (porte) e na medida de tamanho (domicílios). A variável verdadeira tem componentes não explicados pela escala (renda, política local de saneamento), de modo que as variâncias reais dentro dos estratos, $S_h^2$, e as razões $Y_i/x_i$ serão mais dispersas e os EPAs da AES e da PPT, maiores. A ordem entre os planos tende a se manter; a magnitude dos ganhos, não.
+2. **Alocação de Neyman otimizada para a proxy.** Uma alocação ótima para a proxy pode ser subótima para $Y$. A alocação proporcional, menos eficiente aqui, é mais robusta a erros em $S_h$.
+3. **Correlação intraclasse na AC1S.** O resultado da AC1S depende das UPAs do cadastro, que não correspondem às regiões do IBGE (§2.1). Com conglomerados geográficos reais, a correlação intraclasse $\rho_c$ seria provavelmente maior, o que reforçaria a desvantagem do plano.
+4. **Qualidade do cadastro.** `domicilios` é derivada da população; uma medida de tamanho observada de forma independente tornaria a PPT menos dependente de construção.
+
+# Extensão: estratos por K-means
+
+Uma alternativa aos estratos definidos a priori é construí-los por agrupamento, com K-means. Essa estratégia é avaliada aqui contra os estratos previstos no cadastro, nas mesmas condições (Neyman com piso e censo iterativo, $n = 800$).
+
+```{r kmeans}
+X3 <- scale(cbind(log(cad$pop_total_censo2022), cad$pct_urbana, log(cad$densidade)))
+X2 <- scale(cbind(cad$pct_urbana, log(cad$densidade)))
+km <- function(X, s) { set.seed(s); kmeans(X, 5, nstart = 25, iter.max = 100)$cluster }
+epa_sementes <- sapply(1:30, function(s) aes_plano(y, km(X3, s), n)$variancia / v_aas)
+k3 <- km(X3, 1); k2 <- km(X2, 1); a3 <- aes_plano(y, k3, n)
+# K-means sobre população e domicílios (semente 2026)
+set.seed(2026)
+k_orig <- kmeans(scale(cbind(cad$pop_total_censo2022, cad$domicilios)), 5, nstart = 25, iter.max = 100)$cluster
+faixas <- cad |> mutate(g = k_orig) |> group_by(g) |>
+  summarise(Nh = n(), min = min(pop_total_censo2022), max = max(pop_total_censo2022)) |> arrange(min)
+avaliar <- function(nome, g) { a <- aes_plano(y, g, n)
+  data.frame(`Estratificação` = nome, H = length(unique(g)), `Variância entre` = pct(r2_entre(y, g)),
+             `Estratos recenseados` = a$n_censo, `Fração de y nos recenseados` = pct(a$y_censo / Y),
+             `EPA (Neyman)` = f(a$variancia / v_aas, 4), check.names = FALSE) }
+kt <- bind_rows(avaliar("UF × porte (a priori)", cad$estrato_uf_porte),
+                avaliar("Porte (a priori)", cad$porte_populacional),
+                avaliar("K-means: escala, urbanização e densidade", k3),
+                avaliar("K-means: urbanização e densidade", k2),
+                avaliar("K-means: população e domicílios", k_orig),
+                avaliar("Tipologia urbano-rural (a priori)", cad$tipologia_urb_rural))
+```
+
+Agrupamento com $H = 5$ sobre as variáveis padronizadas, 25 inicializações por ajuste.
+
+`r tab(kt, align = "lrrrrr")`
+
+1. **O K-means não supera os estratos a priori.** Com as variáveis de escala, o EPA é de `r kt[3, 6]`, contra `r kt[1, 6]` de UF × porte. O resultado é estável: em 30 sementes diferentes, o EPA `r if (diff(range(epa_sementes)) < 1e-9) paste0('foi sempre ', f(epa_sementes[1], 4), ', com o mesmo agrupamento') else paste0('ficou entre ', f(min(epa_sementes), 4), ' e ', f(max(epa_sementes), 4))`.
+2. **O ganho vem do censo, não do agrupamento.** Um único grupo de `r a3$estratos$Nh[a3$estratos$nh >= a3$estratos$Nh]` municípios grandes e urbanos concentra `r kt[3, 5]` de $y$ e é recenseado; os demais grupos explicam pouco da variância (a parcela entre grupos é de apenas `r kt[3, 3]`).
+3. **Sem a variável de escala, o ganho cai muito** (EPA de `r kt[4, 6]`). O desempenho do K-means depende de agrupar pela mesma dimensão de escala que gera a proxy, o que torna a comparação favorável por construção.
+
+4. **Agrupar por população e domicílios equivale a cortar faixas de população.** As duas variáveis são proporcionais entre si (§2.1), e `domicilios` é a base da proxy. O algoritmo apenas corta a escala: `r paste(sapply(seq_len(nrow(faixas)), function(i) if (faixas$Nh[i] == 1) paste0('1 município com ', f(faixas$min[i]), ' habitantes (São Paulo)') else paste0(f(faixas$Nh[i]), ' municípios de ', f(faixas$min[i]), ' a ', f(faixas$max[i]), ' habitantes')), collapse = '; ')`. É uma estratificação por porte com pontos de corte definidos pelos dados, construída a partir da variável que se quer estimar. Esses estratos têm a maior variância entre grupos da tabela (`r kt[5, 3]`), e ainda assim um EPA `r f(aes_plano(y, k_orig, n)$variancia / aes_plano(y, cad$porte_populacional, n)$variancia, 0)` vezes maior que o do porte. A variância entre grupos é dominada pelos poucos municípios gigantes isolados; já a variância do estimador depende de $\sum_h N_h S_h$, e o estrato de `r f(faixas$Nh[1])` municípios, que vão de `r f(faixas$min[1])` a `r f(faixas$max[1])` habitantes, continua muito heterogêneo e recebe quase toda a amostra. A decomposição da variância orienta a escolha entre estratificações candidatas, mas não substitui o cálculo da variância do plano.
+
+O estouro da alocação de Neyman, motivação comum para buscar estratos alternativos, resolve-se com o censo dos estratos que estouram (§3.2), mantendo estratos interpretáveis e definidos a priori. A estratificação por agrupamento tem lugar em problemas multivariados, com vários domínios e restrições de precisão; um exemplo é o algoritmo genético de Bethel-Chromy implementado no pacote `SamplingStrata`.
+
+# Análise de sensibilidade: domicílios como proxy
+
+Uma escolha aparentemente natural seria usar `domicilios` como proxy e a população total como medida de tamanho da PPT. Como `domicilios` é a população dividida por uma constante regional (§2.1), a razão $y_i/x_i$ é, a menos do arredondamento, o inverso do tamanho médio do domicílio da macrorregião: um único valor por região.
+
+```{r sensibilidade}
+y0 <- cad$domicilios
+p0 <- ppt_hh(y0, cad$pop_total_censo2022, n)
+v0 <- var_aas(y0, n)
+sens <- data.frame(Proxy = c("Domicílios", "Domicílios urbanos (adotada)"),
+                   `Medida de tamanho` = c("População total", "Domicílios"),
+                   `CV de y/x` = f(c(p0$cv_razao, ppt$cv_razao), 3),
+                   `EPA da PPT` = f(c(p0$variancia / v0, ppt$variancia / v_aas), 5), check.names = FALSE)
+```
+
+`r tab(sens, align = "llrr")`
+
+O EPA de `r f(p0$variancia / v0, 5)` dessa combinação decorre da relação algébrica entre as duas variáveis, e não de eficiência do plano.
+
+Com `domicilios` como proxy, a comparação de estratificações confirma o resultado da extensão: o porte com Neyman e censo dos estratos que estouram supera os estratos obtidos por K-means.
+
+```{r sensibilidade-aes}
+sens_aes <- data.frame(
+  `Estratificação (proxy = domicílios)` = c("K-means: população e domicílios", "Porte populacional", "UF × porte"),
+  `EPA (Neyman)` = f(c(aes_plano(y0, k_orig, n)$variancia, aes_plano(y0, cad$porte_populacional, n)$variancia,
+                       aes_plano(y0, cad$estrato_uf_porte, n)$variancia) / v0, 4), check.names = FALSE)
+```
+
+`r tab(sens_aes, align = "lr")`
+
+# §6. Referências
+
+COCHRAN, W. G. *Sampling Techniques*. 3. ed. New York: John Wiley & Sons, 1977.
+
+HANSEN, M. H.; HURWITZ, W. N. On the theory of sampling from finite populations. *The Annals of Mathematical Statistics*, v. 14, n. 4, p. 333–362, 1943.
+
+IBGE. *Censo Demográfico 2022: população e domicílios – primeiros resultados*. Rio de Janeiro: IBGE, 2023.
+
+KISH, L. *Survey Sampling*. New York: John Wiley & Sons, 1965.
+
+LOHR, S. L. *Sampling: Design and Analysis*. 3. ed. Boca Raton: CRC Press, 2022.
+
+SILVA, P. L. N.; BIANCHINI, Z. M.; DIAS, A. J. R. *Amostragem: teoria e prática usando R*. 2024. Disponível em: <https://amostragemcomr.github.io/livro/>.
+
+
+# Apêndice: código
+
+O código completo está em [`R/planos.R`](R/planos.R) (funções dos planos) e neste relatório ([`relatorio.Rmd`](relatorio.Rmd)). Para reproduzir: `rmarkdown::render("relatorio.Rmd")`.
+
+```{r codigo, echo = FALSE, results = "asis"}
+cat("```r\n", paste(readLines("R/planos.R", encoding = "UTF-8"), collapse = "\n"), "\n```\n", sep = "")
+```
