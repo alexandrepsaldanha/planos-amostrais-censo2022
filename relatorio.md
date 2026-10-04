@@ -180,7 +180,7 @@ Em todos os planos, a variância é a **variância teórica** do estimador
 do total, calculada sobre o cadastro completo com a proxy no lugar de
 $Y_i$, para $n = 800$. As cinco variâncias foram conferidas por
 simulação de Monte Carlo, com 20 mil amostras por plano (5 mil na AES):
-as variâncias empíricas ficaram a menos de 1,5% das teóricas
+as variâncias empíricas ficaram a menos de 2% das teóricas
 ([`R/verificacao_monte_carlo.R`](R/verificacao_monte_carlo.R)).
 
 ## 3.1 Amostragem aleatória simples sem reposição (AAS)
