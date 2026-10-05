@@ -1,4 +1,4 @@
-# Comparação teórica de planos amostrais: municípios brasileiros, Censo 2022
+# Como medir o saneamento com 800 municípios? Comparação de planos amostrais (Censo 2022)
 
 Qual plano amostral estima com mais precisão o total de domicílios com saneamento adequado no Brasil, a partir de uma amostra de 800 municípios? O projeto compara quatro planos (AAS, AES, conglomerados e PPT) calculando a variância teórica de cada um sobre um cadastro real de 5.570 municípios.
 
@@ -11,6 +11,13 @@ Trabalho da disciplina *Amostragem e Análise de Dados Amostrais* (PTE 3524) do 
 📄 **[Relatório completo](relatorio.md)**
 
 ---
+
+## Por que importa
+
+O Novo Marco Legal do Saneamento (Lei 14.026/2020) fixou metas de universalização para 2033: 99% da população com água potável e 90% com coleta e tratamento de esgoto. Acompanhar essas metas entre censos exige pesquisas por amostra, e o plano amostral define quanto essa medição custa. Pesquisas com municípios como unidade têm custo alto por unidade (deslocamento, articulação com prefeituras), de modo que precisão por município amostrado é, na prática, uma questão de orçamento.
+
+**Em termos de custo:** para estimar o total nacional com CV de 5%, uma amostra aleatória simples precisaria de cerca de **4.200 municípios**, três quartos do país. A estratificação por UF × porte com alocação de Neyman obtém CV abaixo de 1% com **800**. Mesmo a alocação proporcional, com 800 municípios, equivale em precisão a uma amostra aleatória simples de cerca de 2.560. Os valores são calculados para a proxy de domicílios urbanos; com a variável verdadeira, os ganhos seriam menores (§5 do relatório).
+
 
 ## O que o projeto mostra
 
