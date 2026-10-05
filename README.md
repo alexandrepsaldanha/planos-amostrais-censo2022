@@ -1,4 +1,4 @@
-# Como medir o saneamento com 800 municípios? Comparação de planos amostrais (Censo 2022)
+# Comparação teórica de planos amostrais
 
 Qual plano amostral estima com mais precisão o total de domicílios com saneamento adequado no Brasil, a partir de uma amostra de 800 municípios? O projeto compara quatro planos (AAS, AES, conglomerados e PPT) calculando a variância teórica de cada um sobre um cadastro real de 5.570 municípios.
 
